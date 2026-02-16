@@ -4,6 +4,12 @@ const crypto = require("crypto");
 const Database = require("better-sqlite3");
 
 const app = express();
+// ---- CORS (autorise Webflow)
+app.use((req,res,next)=>{
+  res.header("Access-Control-Allow-Origin","*");
+  res.header("Access-Control-Allow-Headers","Origin, X-Requested-With, Content-Type, Accept");
+  next();
+});
 const PORT = process.env.PORT || 3000;
 
 const BASE_URL = "https://globalapi.solarmanpv.com";
