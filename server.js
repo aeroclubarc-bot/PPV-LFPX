@@ -69,7 +69,9 @@ app.get("/total", async(req,res)=>{
     const now = Date.now();
     const deltaHours = (now-lastTimestamp)/3600000;
 
-    addedEnergy += (powerW/1000)*deltaHours;
+    if (powerW > 50) {
+  addedEnergy += (powerW/1000) * deltaHours;
+}
     lastTimestamp = now;
 
     const totalEnergy = BASE_TOTAL_KWH + addedEnergy;
