@@ -10,7 +10,7 @@ const BASE_URL = "https://globalapi.solarmanpv.com";
 const BASE_TOTAL_KWH = 6517.50;
 
 // ---------- DATABASE
-const db = new Database("solar.db");
+const db = new Database("/data/solar.db");
 
 db.prepare(`
 CREATE TABLE IF NOT EXISTS energy_log (
