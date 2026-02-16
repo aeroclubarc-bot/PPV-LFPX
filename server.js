@@ -106,10 +106,13 @@ async function collectEnergy(){
 
   const totalEnergy = BASE_TOTAL_KWH + addedEnergy;
 
+// enregistre seulement si production ou toutes les 10 min
+if (powerW > 20 || now % 600000 < 60000) {
   db.prepare(`
     INSERT INTO energy_log(timestamp,power,energy)
     VALUES (?,?,?)
   `).run(now, powerW, totalEnergy);
+};
 
   return {
     station,
