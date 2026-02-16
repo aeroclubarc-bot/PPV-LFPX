@@ -1,12 +1,25 @@
 const express = require("express");
 const fetch = require("node-fetch");
 const crypto = require("crypto");
+const Database = require("better-sqlite3");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const BASE_URL = "https://globalapi.solarmanpv.com";
 const BASE_TOTAL_KWH = 6517.50;
+
+// ---------- DATABASE
+const db = new Database("solar.db");
+
+db.prepare(`
+CREATE TABLE IF NOT EXISTS energy_log (
+  id INTEGER PRIMARY KEY,
+  timestamp INTEGER,
+  power REAL,
+  energy REAL
+)
+`).run();
 
 let addedEnergy = 0;
 let lastTimestamp = Date.now();
@@ -19,8 +32,8 @@ function extractToken(data) {
   return data?.access_token || data?.data?.access_token || null;
 }
 
+// ---------- TOKEN
 async function getAccessToken() {
-
   const res = await fetch(
     `${BASE_URL}/account/v1.0/token?appId=${process.env.SOLARMAN_API_ID}&language=en`,
     {
@@ -38,8 +51,8 @@ async function getAccessToken() {
   return extractToken(data);
 }
 
+// ---------- STATION
 async function getStation(token){
-
   const res = await fetch(`${BASE_URL}/station/v1.0/list`,{
     method:"POST",
     headers:{
@@ -57,6 +70,7 @@ async function getStation(token){
   );
 }
 
+// ---------- TOTAL LIVE
 app.get("/total", async(req,res)=>{
 
   try {
@@ -70,11 +84,18 @@ app.get("/total", async(req,res)=>{
     const deltaHours = (now-lastTimestamp)/3600000;
 
     if (powerW > 50) {
-  addedEnergy += (powerW/1000) * deltaHours;
-}
+      addedEnergy += (powerW/1000)*deltaHours;
+    }
+
     lastTimestamp = now;
 
     const totalEnergy = BASE_TOTAL_KWH + addedEnergy;
+
+    // sauvegarde historique
+    db.prepare(`
+      INSERT INTO energy_log(timestamp,power,energy)
+      VALUES (?,?,?)
+    `).run(now,powerW,totalEnergy);
 
     res.json({
       station_name: station.name,
@@ -88,6 +109,27 @@ app.get("/total", async(req,res)=>{
   }
 });
 
+
+// ---------- STATS JOUR
+app.get("/stats/today",(req,res)=>{
+
+  const start = new Date();
+  start.setHours(0,0,0,0);
+
+  const row = db.prepare(`
+    SELECT MIN(energy) as start,
+           MAX(energy) as end
+    FROM energy_log
+    WHERE timestamp > ?
+  `).get(start.getTime());
+
+  res.json({
+    today_kwh: row.end && row.start
+      ? Number((row.end-row.start).toFixed(2))
+      : 0
+  });
+});
+
 app.listen(PORT, ()=>{
-  console.log("ARC Solar API running");
+  console.log("ARC Solar API running with history");
 });
