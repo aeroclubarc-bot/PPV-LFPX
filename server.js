@@ -7,8 +7,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const BASE_URL = "https://globalapi.solarmanpv.com";
-
-// ✅ POINT OFFICIEL ARC (synchronisation réelle)
 const BASE_TOTAL_KWH = 6637.6;
 
 
@@ -20,7 +18,7 @@ app.use((req,res,next)=>{
 });
 
 
-// ---------- DATABASE (Railway volume)
+// ---------- DATABASE
 const db = new Database("/data/solar.db");
 
 db.prepare(`
@@ -31,6 +29,12 @@ CREATE TABLE IF NOT EXISTS energy_log (
   energy REAL
 )
 `).run();
+
+
+// ---------- CACHE MÉMOIRE
+let cachedData = null;
+let lastUpdate = 0;
+const CACHE_DURATION = 30000; // 30s
 
 
 // ---------- UTILS
@@ -48,7 +52,7 @@ function extractToken(data){
 }
 
 
-// ---------- TOKEN SOLARMAN
+// ---------- TOKEN
 async function getAccessToken(){
 
   const res = await fetch(
@@ -87,14 +91,11 @@ async function getStation(token){
 
   const data = await res.json();
 
-  return (
-    data?.data?.list?.[0] ||
-    data?.stationList?.[0]
-  );
+  return data?.data?.list?.[0] || data?.stationList?.[0];
 }
 
 
-// ---------- DEVICE DATA (ONDULEUR)
+// ---------- DEVICE DATA
 async function getDeviceData(token, stationId){
 
   const res = await fetch(`${BASE_URL}/device/v1.0/currentData`,{
@@ -107,12 +108,19 @@ async function getDeviceData(token, stationId){
   });
 
   const data = await res.json();
-
   return data?.data || {};
 }
 
 
-// ---------- COLLECTE RÉELLE
+// ---------- EXTRACTION SÉCURISÉE
+function getValue(list,key){
+  const item = list.find(d=>d.key===key);
+  if(!item) return null;
+  return Number(String(item.value).replace(",","."));
+}
+
+
+// ---------- COLLECTE
 async function collectEnergy(){
 
   const token = await getAccessToken();
@@ -121,20 +129,19 @@ async function collectEnergy(){
 
   const list = device?.dataList || [];
 
-  // ✅ puissance PV réelle panneaux
-  const powerItem =
-    list.find(d => d.key === "DPi_t1") || // PV DC input
-    list.find(d => d.key === "P_INV1");   // fallback
+  // ✅ vraie puissance PV
+  let powerW =
+      getValue(list,"DPi_t1") ??
+      getValue(list,"P_INV1") ??
+      0;
 
-  const powerW = Number(powerItem?.value || 0);
+  // élimine faux zéro API
+  if(powerW < 5) powerW = 0;
 
-  // ✅ compteur cumulatif réel onduleur
-  const energyItem = list.find(d => d.key === "Et_ge0");
+  // ✅ compteur réel
+  let totalEnergy = getValue(list,"Et_ge0") || BASE_TOTAL_KWH;
 
-  let totalEnergy = Number(energyItem?.value || 0);
-
-  // sécurité anti-retour arrière
-  if(!totalEnergy || totalEnergy < BASE_TOTAL_KWH){
+  if(totalEnergy < BASE_TOTAL_KWH){
     totalEnergy = BASE_TOTAL_KWH;
   }
 
@@ -143,29 +150,35 @@ async function collectEnergy(){
   db.prepare(`
     INSERT INTO energy_log(timestamp,power,energy)
     VALUES (?,?,?)
-  `).run(now, powerW, totalEnergy);
+  `).run(now,powerW,totalEnergy);
 
-  return {
-    station,
-    powerW,
-    totalEnergy
-  };
+  return { station, powerW, totalEnergy };
 }
 
 
-// ---------- API TOTAL
+// ---------- API TOTAL (AVEC CACHE)
 app.get("/total", async(req,res)=>{
 
   try{
 
+    const now = Date.now();
+
+    if(cachedData && (now-lastUpdate)<CACHE_DURATION){
+      return res.json(cachedData);
+    }
+
     const result = await collectEnergy();
 
-    res.json({
+    cachedData = {
       station_name: result.station.name,
       current_power_w: result.powerW,
       total_kwh: Number(result.totalEnergy.toFixed(1)),
       battery_soc: result.station.batterySoc
-    });
+    };
+
+    lastUpdate = now;
+
+    res.json(cachedData);
 
   }catch(e){
     res.status(500).json({error:e.message});
@@ -173,7 +186,7 @@ app.get("/total", async(req,res)=>{
 });
 
 
-// ---------- PRODUCTION DU JOUR
+// ---------- STATS JOUR
 app.get("/stats/today",(req,res)=>{
 
   const start = new Date();
@@ -189,20 +202,20 @@ app.get("/stats/today",(req,res)=>{
   res.json({
     today_kwh:
       row.end && row.start
-        ? Number((row.end - row.start).toFixed(2))
+        ? Number((row.end-row.start).toFixed(2))
         : 0
   });
 });
 
 
-// ---------- COURBE JOURNALIÈRE
+// ---------- COURBE JOUR
 app.get("/stats/day-curve",(req,res)=>{
 
   const start = new Date();
   start.setHours(0,0,0,0);
 
   const rows = db.prepare(`
-    SELECT timestamp, power
+    SELECT timestamp,power
     FROM energy_log
     WHERE timestamp > ?
     ORDER BY timestamp ASC
@@ -212,7 +225,7 @@ app.get("/stats/day-curve",(req,res)=>{
 });
 
 
-// ---------- RESET SÉCURISÉ
+// ---------- RESET
 app.get("/reset",(req,res)=>{
 
   if(req.query.key !== process.env.ADMIN_KEY){
@@ -221,23 +234,17 @@ app.get("/reset",(req,res)=>{
 
   db.prepare("DELETE FROM energy_log").run();
 
-  res.json({
-    status:"OK",
-    message:"Historique réinitialisé ✅"
-  });
+  res.json({status:"OK"});
 });
 
 
-// ---------- COLLECTE AUTO (60 s)
+// ---------- COLLECTE AUTO
 setInterval(async ()=>{
-  try{
-    await collectEnergy();
-  }catch(e){
-    console.log("Collect error:",e.message);
-  }
+  try{ await collectEnergy(); }
+  catch(e){ console.log("Collect error:",e.message); }
 },60000);
 
 
 app.listen(PORT,()=>{
-  console.log("✈️ ARC Solar API running — synchronized at 6637.6 kWh");
+  console.log("✈️ ARC Solar API running — PV real-time enabled");
 });
