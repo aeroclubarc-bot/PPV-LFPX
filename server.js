@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS energy_log (
 // ---------- CACHE MÉMOIRE
 let cachedData = null;
 let lastUpdate = 0;
-const CACHE_DURATION = 30000; // 30s
+const CACHE_DURATION = 30000; // 30 sec
 
 
 // ---------- UTILS
@@ -49,6 +49,12 @@ function extractToken(data){
   return data?.access_token ||
          data?.data?.access_token ||
          null;
+}
+
+function getValue(list,key){
+  const item = list.find(d=>d.key===key);
+  if(!item) return null;
+  return Number(String(item.value).replace(",","."));
 }
 
 
@@ -112,14 +118,6 @@ async function getDeviceData(token, stationId){
 }
 
 
-// ---------- EXTRACTION SÉCURISÉE
-function getValue(list,key){
-  const item = list.find(d=>d.key===key);
-  if(!item) return null;
-  return Number(String(item.value).replace(",","."));
-}
-
-
 // ---------- COLLECTE
 async function collectEnergy(){
 
@@ -129,17 +127,18 @@ async function collectEnergy(){
 
   const list = device?.dataList || [];
 
-  // ✅ vraie puissance PV
+  // ✅ PUISSANCE RÉELLE INJECTÉE (SOFAR)
   let powerW =
-      getValue(list,"DPi_t1") ??
-      getValue(list,"P_INV1") ??
+      getValue(list,"PG_Pt1") ??   // puissance AC réelle
+      getValue(list,"DPi_t1") ??   // fallback DC
+      getValue(list,"P_INV1") ??   // fallback inverter
       0;
 
-  // élimine faux zéro API
-  if(powerW < 5) powerW = 0;
+  if(powerW < 5) powerW = 0; // filtre bruit API
 
-  // ✅ compteur réel
-  let totalEnergy = getValue(list,"Et_ge0") || BASE_TOTAL_KWH;
+  // ✅ COMPTEUR TOTAL RÉEL
+  let totalEnergy =
+      getValue(list,"Et_ge0") || BASE_TOTAL_KWH;
 
   if(totalEnergy < BASE_TOTAL_KWH){
     totalEnergy = BASE_TOTAL_KWH;
@@ -156,7 +155,7 @@ async function collectEnergy(){
 }
 
 
-// ---------- API TOTAL (AVEC CACHE)
+// ---------- API TOTAL (CACHE)
 app.get("/total", async(req,res)=>{
 
   try{
@@ -186,7 +185,7 @@ app.get("/total", async(req,res)=>{
 });
 
 
-// ---------- STATS JOUR
+// ---------- PRODUCTION JOUR
 app.get("/stats/today",(req,res)=>{
 
   const start = new Date();
@@ -225,7 +224,7 @@ app.get("/stats/day-curve",(req,res)=>{
 });
 
 
-// ---------- RESET
+// ---------- RESET SÉCURISÉ
 app.get("/reset",(req,res)=>{
 
   if(req.query.key !== process.env.ADMIN_KEY){
@@ -246,5 +245,5 @@ setInterval(async ()=>{
 
 
 app.listen(PORT,()=>{
-  console.log("✈️ ARC Solar API running — PV real-time enabled");
+  console.log("✈️ ARC Solar API running — REAL PV POWER ENABLED");
 });
