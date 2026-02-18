@@ -8,8 +8,8 @@ const PORT = process.env.PORT || 3000;
 
 const BASE_URL = "https://globalapi.solarmanpv.com";
 
-// 🔵 POINT OFFICIEL DE DÉPART ARC
-const BASE_TOTAL_KWH = 6636.8;
+// ✅ POINT OFFICIEL ARC (synchronisation réelle)
+const BASE_TOTAL_KWH = 6637.6;
 
 
 // ---------- CORS
@@ -20,7 +20,7 @@ app.use((req,res,next)=>{
 });
 
 
-// ---------- DATABASE
+// ---------- DATABASE (Railway volume)
 const db = new Database("/data/solar.db");
 
 db.prepare(`
@@ -48,7 +48,7 @@ function extractToken(data){
 }
 
 
-// ---------- TOKEN
+// ---------- TOKEN SOLARMAN
 async function getAccessToken(){
 
   const res = await fetch(
@@ -94,7 +94,7 @@ async function getStation(token){
 }
 
 
-// ---------- DEVICE DATA
+// ---------- DEVICE DATA (ONDULEUR)
 async function getDeviceData(token, stationId){
 
   const res = await fetch(`${BASE_URL}/device/v1.0/currentData`,{
@@ -112,7 +112,7 @@ async function getDeviceData(token, stationId){
 }
 
 
-// ---------- COLLECTE
+// ---------- COLLECTE RÉELLE
 async function collectEnergy(){
 
   const token = await getAccessToken();
@@ -121,14 +121,19 @@ async function collectEnergy(){
 
   const list = device?.dataList || [];
 
-  const powerItem = list.find(d => d.key === "P_INV1");
-  const energyItem = list.find(d => d.key === "Et_ge0");
+  // ✅ puissance PV réelle panneaux
+  const powerItem =
+    list.find(d => d.key === "DPi_t1") || // PV DC input
+    list.find(d => d.key === "P_INV1");   // fallback
 
   const powerW = Number(powerItem?.value || 0);
 
-  // 🔵 valeur réelle ou fallback calibré
+  // ✅ compteur cumulatif réel onduleur
+  const energyItem = list.find(d => d.key === "Et_ge0");
+
   let totalEnergy = Number(energyItem?.value || 0);
 
+  // sécurité anti-retour arrière
   if(!totalEnergy || totalEnergy < BASE_TOTAL_KWH){
     totalEnergy = BASE_TOTAL_KWH;
   }
@@ -168,7 +173,7 @@ app.get("/total", async(req,res)=>{
 });
 
 
-// ---------- STATS JOUR
+// ---------- PRODUCTION DU JOUR
 app.get("/stats/today",(req,res)=>{
 
   const start = new Date();
@@ -190,7 +195,7 @@ app.get("/stats/today",(req,res)=>{
 });
 
 
-// ---------- COURBE JOUR
+// ---------- COURBE JOURNALIÈRE
 app.get("/stats/day-curve",(req,res)=>{
 
   const start = new Date();
@@ -223,7 +228,7 @@ app.get("/reset",(req,res)=>{
 });
 
 
-// ---------- COLLECTE AUTO
+// ---------- COLLECTE AUTO (60 s)
 setInterval(async ()=>{
   try{
     await collectEnergy();
@@ -234,5 +239,5 @@ setInterval(async ()=>{
 
 
 app.listen(PORT,()=>{
-  console.log("✈️ ARC Solar API running — calibrated start 6636.8 kWh");
+  console.log("✈️ ARC Solar API running — synchronized at 6637.6 kWh");
 });
