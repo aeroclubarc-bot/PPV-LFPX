@@ -251,7 +251,7 @@ app.get("/admin/reset",(req,res)=>{
 // ================= AUTO UPDATE 30 MIN =================
 setInterval(async ()=>{
   await collectEnergy();
-},1800000);
+},120000);
 
 
 app.listen(PORT,()=>{
