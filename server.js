@@ -95,24 +95,88 @@ async function getStation(token){
 }
 
 
+// ================= BATTERY SOC =================
+async function getBatterySOC(token){
+
+  if(!token) return null;
+
+  try{
+    const res = await fetch(`${BASE_URL}/device/v1.0/list`,{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        Authorization:`Bearer ${token}`
+      },
+      body: JSON.stringify({pageNum:1,pageSize:10})
+    });
+
+    const data = await res.json();
+    const devices = data?.data?.list || [];
+
+    const battery = devices.find(d =>
+      d.deviceType === "STORAGE" ||
+      d.deviceType === "INVERTER"
+    );
+
+    return battery?.batterySoc ?? null;
+
+  }catch(e){
+    console.log("Battery fetch error");
+    return null;
+  }
+}
+
+
+// ================= REALTIME POWER =================
+async function getRealtimePower(token){
+
+  if(!token) return 0;
+
+  try{
+    const res = await fetch(`${BASE_URL}/device/v1.0/list`,{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        Authorization:`Bearer ${token}`
+      },
+      body: JSON.stringify({pageNum:1,pageSize:10})
+    });
+
+    const data = await res.json();
+    const devices = data?.data?.list || [];
+
+    const inverter = devices.find(d =>
+      d.deviceType === "INVERTER"
+    );
+
+    return Number(inverter?.generationPower ?? 0);
+
+  }catch(e){
+    console.log("Realtime power error");
+    return 0;
+  }
+}
+
+
 // ================= COLLECT ENERGY =================
 async function collectEnergy(){
 
   let station = null;
+  let batterySoc = null;
+  let powerW = 0;
 
   try{
     const token = await getAccessToken();
     station = await getStation(token);
+    batterySoc = await getBatterySOC(token);
+    powerW = await getRealtimePower(token);
   }catch(e){
     console.log("Solarman API error");
   }
 
-  const powerW = Number(station?.generationPower ?? 0);
-
   const now = Date.now();
   const deltaHours = (now - lastTimestamp)/3600000;
 
-  // ignore nuit / bruit
   if(powerW > 20){
     addedEnergy += (powerW/1000)*deltaHours;
   }
@@ -129,7 +193,8 @@ async function collectEnergy(){
   return {
     station,
     powerW,
-    totalEnergy
+    totalEnergy,
+    batterySoc
   };
 }
 
@@ -146,12 +211,10 @@ app.get("/total", async (req,res)=>{
       station_name: station.name || "PPV Aéroclub ARC - LFPX",
       current_power_w: result.powerW ?? 0,
       total_kwh: Number(result.totalEnergy.toFixed(2)),
-      battery_soc: station.batterySoc ?? 0
+      battery_soc: result.batterySoc ?? 0
     });
 
   }catch(e){
-
-    console.log("TOTAL fallback");
 
     res.json({
       station_name:"PPV Aéroclub ARC - LFPX",
@@ -206,7 +269,7 @@ app.get("/admin/reset",(req,res)=>{
 });
 
 
-// ================= AUTO UPDATE (30 MIN) =================
+// ================= AUTO UPDATE (30 MINUTES) =================
 setInterval(async ()=>{
   try{
     await collectEnergy();
@@ -214,9 +277,9 @@ setInterval(async ()=>{
   }catch(e){
     console.log("Collect error:",e.message);
   }
-},1800000); // 30 minutes
+},1800000);
 
 
 app.listen(PORT,()=>{
-  console.log("✈️ ARC Solar API running (stable mode)");
+  console.log("✈️ ARC Solar API running — FINAL STABLE");
 });
