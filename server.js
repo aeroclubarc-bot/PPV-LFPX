@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3000;
 const BASE_URL = "https://globalapi.solarmanpv.com";
 
 
-// ================= BASE RECALÉE =================
+// ================= BASE PRODUCTION =================
 let BASE_TOTAL_KWH = 6645.0;
 
 
@@ -76,7 +76,7 @@ async function getAccessToken(){
 }
 
 
-// ================= STATION (FIX DEFINITIF) =================
+// ================= STATION (LOCK ARC) =================
 async function getStation(token){
 
   if(!token) return null;
@@ -95,12 +95,9 @@ async function getStation(token){
     const data = await res.json();
     const stations = data?.data?.list || [];
 
-    // ✅ sélection explicite ARC
-    const station = stations.find(s =>
+    return stations.find(s =>
       s.name && s.name.includes("Aéroclub ARC")
-    );
-
-    return station || null;
+    ) || null;
 
   }catch(e){
     console.log("Station fetch error");
@@ -109,7 +106,7 @@ async function getStation(token){
 }
 
 
-// ================= COLLECT ENERGY (30 MIN) =================
+// ================= COLLECT ENERGY =================
 async function collectEnergy(){
 
   try{
@@ -143,7 +140,7 @@ async function collectEnergy(){
 }
 
 
-// ================= API TOTAL (LIVE POWER) =================
+// ================= API TOTAL =================
 app.get("/total", async (req,res)=>{
 
   let station = null;
@@ -197,7 +194,36 @@ app.get("/stats/today",(req,res)=>{
 });
 
 
-// ================= RESET COMPTEUR =================
+// ================= DEBUG RAW API =================
+app.get("/debug/raw", async (req,res)=>{
+
+  try{
+
+    const token = await getAccessToken();
+
+    const response = await fetch(`${BASE_URL}/station/v1.0/list`,{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        Authorization:`Bearer ${token}`
+      },
+      body: JSON.stringify({
+        pageNum:1,
+        pageSize:50
+      })
+    });
+
+    const data = await response.json();
+
+    res.json(data);
+
+  }catch(e){
+    res.status(500).json({error:e.message});
+  }
+});
+
+
+// ================= RESET =================
 app.get("/admin/reset",(req,res)=>{
 
   const value = parseFloat(req.query.value);
@@ -225,5 +251,5 @@ setInterval(async ()=>{
 
 
 app.listen(PORT,()=>{
-  console.log("✈️ ARC Solar API running — STATION LOCKED");
+  console.log("✈️ ARC Solar API running — DEBUG ENABLED");
 });
