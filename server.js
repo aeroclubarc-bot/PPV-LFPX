@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3000;
 const BASE_URL = "https://globalapi.solarmanpv.com";
 
 
-// ================= BASE RECALABLE =================
+// ================= BASE RECALÉE =================
 let BASE_TOTAL_KWH = 6645.0;
 
 
@@ -101,81 +101,70 @@ async function getStation(token){
 }
 
 
-// ================= COLLECT ENERGY =================
+// ================= COLLECT ENERGY (30 MIN) =================
 async function collectEnergy(){
+
+  try{
+
+    const token = await getAccessToken();
+    const station = await getStation(token);
+
+    const powerW = Number(station?.generationPower ?? 0);
+
+    const now = Date.now();
+    const deltaHours = (now - lastTimestamp)/3600000;
+
+    if(powerW > 20){
+      addedEnergy += (powerW/1000)*deltaHours;
+    }
+
+    lastTimestamp = now;
+
+    const totalEnergy = BASE_TOTAL_KWH + addedEnergy;
+
+    db.prepare(`
+      INSERT INTO energy_log(timestamp,power,energy)
+      VALUES (?,?,?)
+    `).run(now,powerW,totalEnergy);
+
+  }catch(e){
+    console.log("Collect error");
+  }
+}
+
+
+// ================= API TOTAL (LIVE POWER) =================
+app.get("/total", async (req,res)=>{
 
   let station = null;
   let powerW = 0;
   let batterySoc = 0;
 
   try{
+
     const token = await getAccessToken();
     station = await getStation(token);
 
-    // ✅ puissance accessible chez SOFAR EU
+    // ✅ lecture LIVE — comme le code qui marchait
     powerW = Number(station?.generationPower ?? 0);
-
-    // SOC parfois disponible ici
     batterySoc = Number(station?.batterySoc ?? 0);
 
   }catch(e){
-    console.log("Solarman API error");
+    console.log("Live read error");
   }
-
-  const now = Date.now();
-  const deltaHours = (now - lastTimestamp)/3600000;
-
-  // ignore nuit
-  if(powerW > 20){
-    addedEnergy += (powerW/1000)*deltaHours;
-  }
-
-  lastTimestamp = now;
 
   const totalEnergy = BASE_TOTAL_KWH + addedEnergy;
 
-  db.prepare(`
-    INSERT INTO energy_log(timestamp,power,energy)
-    VALUES (?,?,?)
-  `).run(now,powerW,totalEnergy);
-
-  return {
-    station,
-    powerW,
-    totalEnergy,
-    batterySoc
-  };
-}
-
-
-// ================= API TOTAL =================
-app.get("/total", async (req,res)=>{
-
-  try{
-
-    const result = await collectEnergy();
-    const station = result.station || {};
-
-    res.json({
-      station_name: station.name || "PPV Aéroclub ARC - LFPX",
-      current_power_w: result.powerW,
-      total_kwh: Number(result.totalEnergy.toFixed(2)),
-      battery_soc: result.batterySoc
-    });
-
-  }catch(e){
-
-    res.json({
-      station_name:"PPV Aéroclub ARC - LFPX",
-      current_power_w:0,
-      total_kwh: BASE_TOTAL_KWH + addedEnergy,
-      battery_soc:0
-    });
-  }
+  res.json({
+    station_name: station?.name || "PPV Aéroclub ARC - LFPX",
+    current_power_w: powerW,
+    total_kwh: Number(totalEnergy.toFixed(2)),
+    battery_soc: batterySoc
+  });
 });
 
 
-// ================= STATS TODAY =================
+// ================= STATS JOUR =================
 app.get("/stats/today",(req,res)=>{
 
   const start = new Date();
@@ -197,7 +186,7 @@ app.get("/stats/today",(req,res)=>{
 });
 
 
-// ================= ADMIN RESET =================
+// ================= RESET COMPTEUR =================
 app.get("/admin/reset",(req,res)=>{
 
   const value = parseFloat(req.query.value);
@@ -218,17 +207,12 @@ app.get("/admin/reset",(req,res)=>{
 });
 
 
-// ================= AUTO UPDATE (30 MINUTES) =================
+// ================= UPDATE AUTO 30 MIN =================
 setInterval(async ()=>{
-  try{
-    await collectEnergy();
-    console.log("Solar update OK");
-  }catch(e){
-    console.log("Collect error:",e.message);
-  }
+  await collectEnergy();
 },1800000);
 
 
 app.listen(PORT,()=>{
-  console.log("✈️ ARC Solar API running — STABLE SOFAR EU");
+  console.log("✈️ ARC Solar API running — LIVE POWER RESTORED");
 });
