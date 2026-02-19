@@ -4,54 +4,54 @@ const crypto = require("crypto");
 const Database = require("better-sqlite3");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-const BASE_URL = "https://globalapi.solarmanpv.com";
-
-// ---------- CORS (Webflow)
+// ---- CORS (autorise Webflow)
 app.use((req,res,next)=>{
   res.header("Access-Control-Allow-Origin","*");
   res.header("Access-Control-Allow-Headers","Origin, X-Requested-With, Content-Type, Accept");
   next();
 });
+const PORT = process.env.PORT || 3000;
 
+const BASE_URL = "https://globalapi.solarmanpv.com";
+const BASE_TOTAL_KWH = 6505.05; // calibration réelle ARC
 
-// ---------- DATABASE (Railway persistent volume)
+// ---------- DATABASE (volume Railway)
 const db = new Database("/data/solar.db");
 
-db.prepare(`
+db.prepare(
 CREATE TABLE IF NOT EXISTS energy_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   timestamp INTEGER,
   power REAL,
   energy REAL
 )
-`).run();
+).run();
 
+let addedEnergy = 0;
+let lastTimestamp = Date.now();
 
 // ---------- UTILS
-function sha256Lower(str){
+function sha256Lower(str) {
   return crypto.createHash("sha256")
     .update(str)
     .digest("hex")
     .toLowerCase();
 }
 
-function extractToken(data){
+function extractToken(data) {
   return data?.access_token ||
          data?.data?.access_token ||
          null;
 }
 
-
 // ---------- TOKEN SOLARMAN
-async function getAccessToken(){
+async function getAccessToken() {
 
   const res = await fetch(
-    `${BASE_URL}/account/v1.0/token?appId=${process.env.SOLARMAN_API_ID}&language=en`,
+    ${BASE_URL}/account/v1.0/token?appId=${process.env.SOLARMAN_API_ID}&language=en,
     {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
+      method: "POST",
+      headers: { "Content-Type":"application/json" },
       body: JSON.stringify({
         email: process.env.SOLARMAN_USERNAME,
         password: sha256Lower(process.env.SOLARMAN_PASSWORD),
@@ -68,15 +68,14 @@ async function getAccessToken(){
   return token;
 }
 
-
 // ---------- STATION
 async function getStation(token){
 
-  const res = await fetch(`${BASE_URL}/station/v1.0/list`,{
+  const res = await fetch(${BASE_URL}/station/v1.0/list,{
     method:"POST",
     headers:{
       "Content-Type":"application/json",
-      Authorization:`Bearer ${token}`
+      Authorization:Bearer ${token}
     },
     body: JSON.stringify({pageNum:1,pageSize:10})
   });
@@ -89,49 +88,33 @@ async function getStation(token){
   );
 }
 
-
-// ---------- DEVICE DATA (ONDULEUR RÉEL)
-async function getDeviceData(token, stationId){
-
-  const res = await fetch(`${BASE_URL}/device/v1.0/currentData`,{
-    method:"POST",
-    headers:{
-      "Content-Type":"application/json",
-      Authorization:`Bearer ${token}`
-    },
-    body: JSON.stringify({ stationId })
-  });
-
-  const data = await res.json();
-
-  return data?.data || {};
-}
-
-
-// ---------- COLLECTE RÉELLE
+// ---------- TOTAL LIVE
 async function collectEnergy(){
 
   const token = await getAccessToken();
   const station = await getStation(token);
-  const device = await getDeviceData(token, station.id);
 
-  const list = device?.dataList || [];
-
-  // puissance instantanée onduleur
-  const powerItem = list.find(d => d.key === "P_INV1");
-  const powerW = Number(powerItem?.value || 0);
-
-  // production cumulée réelle
-  const energyItem = list.find(d => d.key === "Et_ge0");
-  const totalEnergy = Number(energyItem?.value || 0);
+  const powerW = Number(station?.generationPower ?? 0);
 
   const now = Date.now();
+  const deltaHours = (now - lastTimestamp) / 3600000;
 
-  // log historique
-  db.prepare(`
+  // ignore nuit / bruit capteur
+  if (powerW > 50) {
+    addedEnergy += (powerW / 1000) * deltaHours;
+  }
+
+  lastTimestamp = now;
+
+  const totalEnergy = BASE_TOTAL_KWH + addedEnergy;
+
+// enregistre seulement si production ou toutes les 10 min
+if (powerW > 20 || now % 600000 < 60000) {
+  db.prepare(
     INSERT INTO energy_log(timestamp,power,energy)
     VALUES (?,?,?)
-  `).run(now, powerW, totalEnergy);
+  ).run(now, powerW, totalEnergy);
+};
 
   return {
     station,
@@ -140,9 +123,8 @@ async function collectEnergy(){
   };
 }
 
-
-// ---------- API TOTAL
 app.get("/total", async(req,res)=>{
+
   try {
 
     const result = await collectEnergy();
@@ -150,7 +132,7 @@ app.get("/total", async(req,res)=>{
     res.json({
       station_name: result.station.name,
       current_power_w: result.powerW,
-      total_kwh: Number(result.totalEnergy.toFixed(1)),
+      total_kwh: Number(result.totalEnergy.toFixed(2)),
       battery_soc: result.station.batterySoc
     });
 
@@ -159,19 +141,18 @@ app.get("/total", async(req,res)=>{
   }
 });
 
-
 // ---------- STATS JOUR
 app.get("/stats/today",(req,res)=>{
 
   const start = new Date();
   start.setHours(0,0,0,0);
 
-  const row = db.prepare(`
+  const row = db.prepare(
     SELECT MIN(energy) as start,
            MAX(energy) as end
     FROM energy_log
     WHERE timestamp > ?
-  `).get(start.getTime());
+  ).get(start.getTime());
 
   res.json({
     today_kwh:
@@ -181,34 +162,31 @@ app.get("/stats/today",(req,res)=>{
   });
 });
 
-
-// ---------- COURBE JOUR
+// ---------- COURBE JOURNALIÈRE
 app.get("/stats/day-curve",(req,res)=>{
 
   const start = new Date();
   start.setHours(0,0,0,0);
 
-  const rows = db.prepare(`
+  const rows = db.prepare(
     SELECT timestamp, power
     FROM energy_log
     WHERE timestamp > ?
     ORDER BY timestamp ASC
-  `).all(start.getTime());
+  ).all(start.getTime());
 
   res.json(rows);
 });
 
-
-// ---------- COLLECTE AUTO (60s)
+// ---------- COLLECTE AUTO (toutes les 60s)
 setInterval(async ()=>{
-  try{
+  try {
     await collectEnergy();
-  }catch(e){
-    console.log("Collect error:",e.message);
+  } catch(e){
+    console.log("Collect error:", e.message);
   }
-},60000);
+}, 60000);
 
-
-app.listen(PORT,()=>{
-  console.log("✈️ ARC Solar API running — REAL inverter data");
+app.listen(PORT, ()=>{
+  console.log("✈️ ARC Solar API running with persistent history");
 });
