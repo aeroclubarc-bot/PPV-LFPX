@@ -93,18 +93,22 @@ async function getStation(token){
     });
 
     const data = await res.json();
-    const stations = data?.data?.list || [];
+
+    // ✅ TON FORMAT API
+    const stations =
+      data.stationList ||
+      data?.data?.list ||
+      [];
 
     return stations.find(s =>
       s.name && s.name.includes("Aéroclub ARC")
-    ) || null;
+    ) || stations[0] || null;
 
   }catch(e){
     console.log("Station fetch error");
     return null;
   }
 }
-
 
 // ================= COLLECT ENERGY =================
 async function collectEnergy(){
