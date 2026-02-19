@@ -13,10 +13,12 @@ app.use((req,res,next)=>{
 const PORT = process.env.PORT || 3000;
 const BASE_URL = "https://globalapi.solarmanpv.com";
 
-// ===== BASE RECALABLE
-let BASE_TOTAL_KWH = 6644.7;
 
-// ===== DATABASE (Railway volume)
+// ================= BASE RECALABLE =================
+let BASE_TOTAL_KWH = 6645.0;
+
+
+// ================= DATABASE =================
 const db = new Database("/data/solar.db");
 
 db.prepare(`
@@ -32,7 +34,7 @@ let addedEnergy = 0;
 let lastTimestamp = Date.now();
 
 
-// ---------- SHA256
+// ================= UTILS =================
 function sha256Lower(str){
   return crypto.createHash("sha256")
     .update(str)
@@ -47,7 +49,7 @@ function extractToken(data){
 }
 
 
-// ---------- TOKEN SOLARMAN
+// ================= TOKEN =================
 async function getAccessToken(){
 
   const res = await fetch(
@@ -64,44 +66,53 @@ async function getAccessToken(){
   );
 
   const data = await res.json();
-  const token = extractToken(data);
-
-  if(!token) throw new Error("Token failed");
-
-  return token;
+  return extractToken(data);
 }
 
 
-// ---------- STATION
+// ================= STATION =================
 async function getStation(token){
 
-  const res = await fetch(`${BASE_URL}/station/v1.0/list`,{
-    method:"POST",
-    headers:{
-      "Content-Type":"application/json",
-      Authorization:`Bearer ${token}`
-    },
-    body: JSON.stringify({pageNum:1,pageSize:10})
-  });
+  if(!token) return null;
 
-  const data = await res.json();
+  try{
+    const res = await fetch(`${BASE_URL}/station/v1.0/list`,{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        Authorization:`Bearer ${token}`
+      },
+      body: JSON.stringify({pageNum:1,pageSize:10})
+    });
 
-  return data?.data?.list?.[0];
+    const data = await res.json();
+    return data?.data?.list?.[0] || null;
+
+  }catch(e){
+    console.log("Station fetch error");
+    return null;
+  }
 }
 
 
-// ---------- COLLECT ENERGY
+// ================= COLLECT ENERGY =================
 async function collectEnergy(){
 
-  const token = await getAccessToken();
-  const station = await getStation(token);
+  let station = null;
+
+  try{
+    const token = await getAccessToken();
+    station = await getStation(token);
+  }catch(e){
+    console.log("Solarman API error");
+  }
 
   const powerW = Number(station?.generationPower ?? 0);
 
   const now = Date.now();
   const deltaHours = (now - lastTimestamp)/3600000;
 
-  // ignore nuit
+  // ignore nuit / bruit
   if(powerW > 20){
     addedEnergy += (powerW/1000)*deltaHours;
   }
@@ -123,25 +134,36 @@ async function collectEnergy(){
 }
 
 
-// ---------- API TOTAL
-app.get("/total", async(req,res)=>{
+// ================= API TOTAL =================
+app.get("/total", async (req,res)=>{
+
   try{
+
     const result = await collectEnergy();
+    const station = result.station || {};
 
     res.json({
-      station_name: result.station.name,
-      current_power_w: result.powerW,
+      station_name: station.name || "PPV Aéroclub ARC - LFPX",
+      current_power_w: result.powerW ?? 0,
       total_kwh: Number(result.totalEnergy.toFixed(2)),
-      battery_soc: result.station.batterySoc
+      battery_soc: station.batterySoc ?? 0
     });
 
   }catch(e){
-    res.status(500).json({error:e.message});
+
+    console.log("TOTAL fallback");
+
+    res.json({
+      station_name:"PPV Aéroclub ARC - LFPX",
+      current_power_w:0,
+      total_kwh: BASE_TOTAL_KWH + addedEnergy,
+      battery_soc:0
+    });
   }
 });
 
 
-// ---------- STATS TODAY
+// ================= STATS TODAY =================
 app.get("/stats/today",(req,res)=>{
 
   const start = new Date();
@@ -163,7 +185,7 @@ app.get("/stats/today",(req,res)=>{
 });
 
 
-// ---------- ADMIN RESET
+// ================= ADMIN RESET =================
 app.get("/admin/reset",(req,res)=>{
 
   const value = parseFloat(req.query.value);
@@ -184,7 +206,7 @@ app.get("/admin/reset",(req,res)=>{
 });
 
 
-// ---------- COLLECT AUTO (30 MINUTES)
+// ================= AUTO UPDATE (30 MIN) =================
 setInterval(async ()=>{
   try{
     await collectEnergy();
@@ -192,9 +214,9 @@ setInterval(async ()=>{
   }catch(e){
     console.log("Collect error:",e.message);
   }
-}, 1800000); // 30 min
+},1800000); // 30 minutes
 
 
 app.listen(PORT,()=>{
-  console.log("✈️ ARC Solar API running");
+  console.log("✈️ ARC Solar API running (stable mode)");
 });
