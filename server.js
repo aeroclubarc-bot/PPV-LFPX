@@ -52,21 +52,27 @@ function extractToken(data){
 // ================= TOKEN =================
 async function getAccessToken(){
 
-  const res = await fetch(
-    `${BASE_URL}/account/v1.0/token?appId=${process.env.SOLARMAN_API_ID}&language=en`,
-    {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({
-        email: process.env.SOLARMAN_USERNAME,
-        password: sha256Lower(process.env.SOLARMAN_PASSWORD),
-        appSecret: process.env.SOLARMAN_API_SECRET
-      })
-    }
-  );
+  try{
+    const res = await fetch(
+      `${BASE_URL}/account/v1.0/token?appId=${process.env.SOLARMAN_API_ID}&language=en`,
+      {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({
+          email: process.env.SOLARMAN_USERNAME,
+          password: sha256Lower(process.env.SOLARMAN_PASSWORD),
+          appSecret: process.env.SOLARMAN_API_SECRET
+        })
+      }
+    );
 
-  const data = await res.json();
-  return extractToken(data);
+    const data = await res.json();
+    return extractToken(data);
+
+  }catch(e){
+    console.log("Token error");
+    return null;
+  }
 }
 
 
@@ -95,51 +101,6 @@ async function getStation(token){
 }
 
 
-// ================= REALTIME DATA SOFAR =================
-async function getRealtimeData(token){
-
-  if(!token) return { powerW:0, batterySoc:0 };
-
-  try{
-
-    const res = await fetch(`${BASE_URL}/device/v1.0/currentData`,{
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        Authorization:`Bearer ${token}`
-      },
-      body: JSON.stringify({
-        deviceSn: process.env.SOLARMAN_DEVICE_SN
-      })
-    });
-
-    const data = await res.json();
-    const list = data?.dataList || [];
-
-    let powerW = 0;
-    let batterySoc = 0;
-
-    list.forEach(item => {
-
-      if(item.key === "P_INV1"){
-        powerW = Number(item.value);
-      }
-
-      if(item.key === "B_left_cap1"){
-        batterySoc = Number(item.value);
-      }
-
-    });
-
-    return { powerW, batterySoc };
-
-  }catch(e){
-    console.log("Realtime data error");
-    return { powerW:0, batterySoc:0 };
-  }
-}
-
-
 // ================= COLLECT ENERGY =================
 async function collectEnergy(){
 
@@ -149,12 +110,13 @@ async function collectEnergy(){
 
   try{
     const token = await getAccessToken();
-
     station = await getStation(token);
 
-    const realtime = await getRealtimeData(token);
-    powerW = realtime.powerW;
-    batterySoc = realtime.batterySoc;
+    // ✅ puissance accessible chez SOFAR EU
+    powerW = Number(station?.generationPower ?? 0);
+
+    // SOC parfois disponible ici
+    batterySoc = Number(station?.batterySoc ?? 0);
 
   }catch(e){
     console.log("Solarman API error");
@@ -163,6 +125,7 @@ async function collectEnergy(){
   const now = Date.now();
   const deltaHours = (now - lastTimestamp)/3600000;
 
+  // ignore nuit
   if(powerW > 20){
     addedEnergy += (powerW/1000)*deltaHours;
   }
@@ -255,7 +218,7 @@ app.get("/admin/reset",(req,res)=>{
 });
 
 
-// ================= AUTO UPDATE 30 MIN =================
+// ================= AUTO UPDATE (30 MINUTES) =================
 setInterval(async ()=>{
   try{
     await collectEnergy();
@@ -267,5 +230,5 @@ setInterval(async ()=>{
 
 
 app.listen(PORT,()=>{
-  console.log("✈️ ARC Solar API running — SOFAR realtime");
+  console.log("✈️ ARC Solar API running — STABLE SOFAR EU");
 });
