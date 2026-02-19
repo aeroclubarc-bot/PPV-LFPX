@@ -76,23 +76,31 @@ async function getAccessToken(){
 }
 
 
-// ================= STATION =================
+// ================= STATION (FIX DEFINITIF) =================
 async function getStation(token){
 
   if(!token) return null;
 
   try{
+
     const res = await fetch(`${BASE_URL}/station/v1.0/list`,{
       method:"POST",
       headers:{
         "Content-Type":"application/json",
         Authorization:`Bearer ${token}`
       },
-      body: JSON.stringify({pageNum:1,pageSize:10})
+      body: JSON.stringify({pageNum:1,pageSize:20})
     });
 
     const data = await res.json();
-    return data?.data?.list?.[0] || null;
+    const stations = data?.data?.list || [];
+
+    // ✅ sélection explicite ARC
+    const station = stations.find(s =>
+      s.name && s.name.includes("Aéroclub ARC")
+    );
+
+    return station || null;
 
   }catch(e){
     console.log("Station fetch error");
@@ -109,7 +117,9 @@ async function collectEnergy(){
     const token = await getAccessToken();
     const station = await getStation(token);
 
-    const powerW = Number(station?.generationPower ?? 0);
+    if(!station) return;
+
+    const powerW = Number(station.generationPower ?? 0);
 
     const now = Date.now();
     const deltaHours = (now - lastTimestamp)/3600000;
@@ -145,9 +155,10 @@ app.get("/total", async (req,res)=>{
     const token = await getAccessToken();
     station = await getStation(token);
 
-    // ✅ lecture LIVE — comme le code qui marchait
-    powerW = Number(station?.generationPower ?? 0);
-    batterySoc = Number(station?.batterySoc ?? 0);
+    if(station){
+      powerW = Number(station.generationPower ?? 0);
+      batterySoc = Number(station.batterySoc ?? 0);
+    }
 
   }catch(e){
     console.log("Live read error");
@@ -207,12 +218,12 @@ app.get("/admin/reset",(req,res)=>{
 });
 
 
-// ================= UPDATE AUTO 30 MIN =================
+// ================= AUTO UPDATE 30 MIN =================
 setInterval(async ()=>{
   await collectEnergy();
 },1800000);
 
 
 app.listen(PORT,()=>{
-  console.log("✈️ ARC Solar API running — LIVE POWER RESTORED");
+  console.log("✈️ ARC Solar API running — STATION LOCKED");
 });
