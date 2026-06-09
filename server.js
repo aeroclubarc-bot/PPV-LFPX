@@ -253,6 +253,33 @@ setInterval(async ()=>{
   await collectEnergy();
 },120000);
 
+// ================= DEBUG TOKEN =================
+app.get("/debug/token", async (req,res)=>{
+
+  try{
+
+    const token = await getAccessToken();
+
+    res.json({
+      token_exists: !!token,
+      token_preview: token
+        ? token.substring(0,20)+"..."
+        : null
+    });
+
+  }catch(e){
+    res.status(500).json({
+      error:e.message
+    });
+  }
+
+});
+
+
+// ================= START SERVER =================
+app.listen(PORT,()=>{
+  console.log("✈️ ARC Solar API running — DEBUG ENABLED");
+});
 
 app.listen(PORT,()=>{
   console.log("✈️ ARC Solar API running — DEBUG ENABLED");
