@@ -280,7 +280,3 @@ app.get("/debug/token", async (req,res)=>{
 app.listen(PORT,()=>{
   console.log("✈️ ARC Solar API running — DEBUG ENABLED");
 });
-
-app.listen(PORT,()=>{
-  console.log("✈️ ARC Solar API running — DEBUG ENABLED");
-});
