@@ -65,9 +65,18 @@ async function getAccessToken(){
         })
       }
     );
+const data = await res.json();
 
-    const data = await res.json();
-    return extractToken(data);
+console.log("===== SOLARMAN LOGIN DEBUG =====");
+console.log("APP_ID =", process.env.SOLARMAN_API_ID ? "OK" : "MISSING");
+console.log("APP_SECRET =", process.env.SOLARMAN_API_SECRET ? "OK" : "MISSING");
+console.log("USERNAME =", process.env.SOLARMAN_USERNAME ? "OK" : "MISSING");
+console.log("PASSWORD =", process.env.SOLARMAN_PASSWORD ? "OK" : "MISSING");
+
+console.log("LOGIN RESPONSE:");
+console.log(JSON.stringify(data,null,2));
+
+return extractToken(data);
 
   }catch(e){
     console.log("Token error");
@@ -252,7 +261,6 @@ app.get("/admin/reset",(req,res)=>{
 setInterval(async ()=>{
   await collectEnergy();
 },120000);
-
 // ================= DEBUG TOKEN =================
 app.get("/debug/token", async (req,res)=>{
 
@@ -264,13 +272,19 @@ app.get("/debug/token", async (req,res)=>{
       token_exists: !!token,
       token_preview: token
         ? token.substring(0,20)+"..."
-        : null
+        : null,
+      app_id_present: !!process.env.SOLARMAN_API_ID,
+      app_secret_present: !!process.env.SOLARMAN_API_SECRET,
+      username_present: !!process.env.SOLARMAN_USERNAME,
+      password_present: !!process.env.SOLARMAN_PASSWORD
     });
 
   }catch(e){
+
     res.status(500).json({
       error:e.message
     });
+
   }
 
 });
